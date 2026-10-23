@@ -4,7 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Diagnostics;
+using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -639,7 +643,9 @@ namespace MchoseWidget
         private readonly System.Windows.Forms.Timer _pollTimer;
         private readonly string _statePath;
         private ContextMenuStrip _menu;
-        private ToolStripMenuItem _miTop, _miLock, _miStartup;
+        private ToolStripMenuItem _miTop, _miLock, _miStartup, _miAutoUpdate;
+        private bool _autoUpdate = true;
+        private const string AppVersion = "1.2.0";
         private bool _polling;
         private static bool _saveFrame = false;
         private bool _drag;
@@ -715,6 +721,13 @@ namespace MchoseWidget
 
             Shown += delegate
             {
+                if (_autoUpdate)
+                {
+                    System.Windows.Forms.Timer t = new System.Windows.Forms.Timer();
+                    t.Interval = 8000;
+                    t.Tick += delegate { t.Stop(); t.Dispose(); CheckForUpdates(true); };
+                    t.Start();
+                }
                 System.IO.File.AppendAllText(@"D:\work\qd\build\pos.log",
                     string.Format("shown left={0} top={1} wa={2}\r\n", Left, Top, Screen.PrimaryScreen.WorkingArea));
                 Invalidate();
@@ -772,6 +785,12 @@ namespace MchoseWidget
             _miStartup.Checked = Startup.IsEnabled();
             _miStartup.CheckedChanged += delegate { Startup.Set(_miStartup.Checked); };
             _menu.Items.Add(_miStartup);
+            _miAutoUpdate = new ToolStripMenuItem("自动检查更新");
+            _miAutoUpdate.CheckOnClick = true;
+            _miAutoUpdate.Checked = _autoUpdate;
+            _miAutoUpdate.CheckedChanged += delegate { _autoUpdate = _miAutoUpdate.Checked; SaveState(); };
+            _menu.Items.Add(_miAutoUpdate);
+            _menu.Items.Add("检查更新", null, delegate { CheckForUpdates(false); });
             _menu.Items.Add(new ToolStripSeparator());
             _menu.Items.Add("刷新", null, delegate { Poll(); });
             _menu.Items.Add("退出", null, delegate { Close(); });
@@ -846,6 +865,116 @@ namespace MchoseWidget
                     Left, Top, _locked, TopMost, _opacity));
             }
             catch { }
+        }
+
+        private static int[] ParseVersion(string v)
+        {
+            Match m = Regex.Match(v ?? "", @"(\d+)\.(\d+)(?:\.(\d+))?");
+            if (!m.Success) return new int[] { 0, 0, 0 };
+            return new int[] {
+                int.Parse(m.Groups[1].Value),
+                int.Parse(m.Groups[2].Value),
+                m.Groups[3].Success ? int.Parse(m.Groups[3].Value) : 0
+            };
+        }
+
+        private static int CompareVersions(string a, string b)
+        {
+            int[] x = ParseVersion(a), y = ParseVersion(b);
+            for (int i = 0; i < 3; i++)
+            {
+                if (x[i] != y[i]) return x[i] < y[i] ? -1 : 1;
+            }
+            return 0;
+        }
+
+        private void Notify(string text)
+        {
+            try { _tray.ShowBalloonTip(3000, "T Hub", text, ToolTipIcon.Info); } catch { }
+        }
+
+        private void CheckForUpdates(bool silent)
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(
+                        "https://api.github.com/repos/chuzihang123/T_hub/releases/latest");
+                    req.UserAgent = "T-Hub-Updater";
+                    req.Accept = "application/vnd.github+json";
+                    req.Timeout = 15000;
+                    string json;
+                    using (WebResponse resp = req.GetResponse())
+                    using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                        json = sr.ReadToEnd();
+
+                    Match tagMatch = Regex.Match(json, "\"tag_name\"\\s*:\\s*\"v?([0-9.]+)\"");
+                    Match urlMatch = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"([^\"]*setup\\.exe)\"");
+                    if (!tagMatch.Success || !urlMatch.Success)
+                    {
+                        if (!silent) Notify("检查更新失败：返回数据不完整");
+                        return;
+                    }
+                    string tag = tagMatch.Groups[1].Value;
+                    string url = urlMatch.Groups[1].Value;
+                    if (CompareVersions(tag, AppVersion) <= 0)
+                    {
+                        if (!silent) Notify("已是最新版本 v" + AppVersion);
+                        return;
+                    }
+                    if (!silent)
+                    {
+                        DialogResult r = MessageBox.Show(
+                            "发现新版本 v" + tag + "，是否立即更新？\n更新完成后会自动重启。",
+                            "T Hub", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                        if (r != DialogResult.Yes) return;
+                    }
+                    Notify("正在更新到 v" + tag + "…");
+                    DownloadAndUpdate(url, tag);
+                }
+                catch (Exception ex)
+                {
+                    if (!silent) Notify("检查更新失败：" + ex.Message);
+                }
+            });
+        }
+
+        private void DownloadAndUpdate(string url, string tag)
+        {
+            try
+            {
+                string setup = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T-Hub-setup-" + tag + ".exe");
+                using (WebClient wc = new WebClient())
+                {
+                    wc.Headers.Add("User-Agent", "T-Hub-Updater");
+                    wc.DownloadFile(url, setup);
+                }
+
+                string installed = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    @"Programs\T Hub\MchoseWidget.exe");
+                string relaunch = System.IO.File.Exists(installed) ? installed : Application.ExecutablePath;
+
+                string cmdPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "t-hub-update.cmd");
+                string script =
+                    "@echo off\r\n" +
+                    "timeout /t 2 /nobreak >nul\r\n" +
+                    "\"" + setup + "\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n" +
+                    "start \"\" \"" + relaunch + "\"\r\n";
+                System.IO.File.WriteAllText(cmdPath, script);
+
+                ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", "/c \"" + cmdPath + "\"");
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
+                psi.CreateNoWindow = true;
+                Process.Start(psi);
+                Application.Exit();
+            }
+            catch (Exception ex)
+            {
+                Notify("更新失败：" + ex.Message);
+            }
         }
 
         private void Poll()

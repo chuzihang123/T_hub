@@ -1,5 +1,5 @@
 #define AppName "T Hub"
-#define AppVersion "1.1.3"
+#define AppVersion "1.2.0"
 #define AppExe "MchoseWidget.exe"
 #define AppPublisher "chuzihang123"
 
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\T Hub
 DefaultGroupName=T Hub
 DisableProgramGroupPage=yes
 OutputDir=..\dist
-OutputBaseFilename=T-Hub-v1.1.3-setup
+OutputBaseFilename=T-Hub-v1.2.0-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -21,7 +21,7 @@ CloseApplications=yes
 SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
-VersionInfoVersion=1.1.3.0
+VersionInfoVersion=1.2.0.0
 VersionInfoDescription=T Hub installer
 VersionInfoProductName={#AppName}
 
