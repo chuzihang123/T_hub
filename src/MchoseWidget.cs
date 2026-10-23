@@ -671,7 +671,7 @@ namespace MchoseWidget
             TopMost = false;
             ShowInTaskbar = false;
             BackColor = Color.Black;
-            ClientSize = new Size(224, 132);
+            ClientSize = new Size(224, 150);
 
             _statePath = System.IO.Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -1136,8 +1136,8 @@ namespace MchoseWidget
             int width = count <= 0 ? 120 : count * 100 + 24;
             if (ClientSize.Width != width)
             {
-                ClientSize = new Size(width, 132);
-                using (GraphicsPath rp = RoundPath(new Rectangle(0, 0, width, 132), 22))
+                ClientSize = new Size(width, 150);
+                using (GraphicsPath rp = RoundPath(new Rectangle(0, 0, width, 150), 22))
                     Region = new Region(rp);
             }
             if (count <= 0)
@@ -1206,8 +1206,8 @@ namespace MchoseWidget
                             {
                                 MouseDevice d = _devices[i];
                                 int cx = slot * i + slot / 2;
-                                DrawRing(g, new Rectangle(cx - 26, 22, 52, 52), d);
-                                DrawCaption(g, cx, d);
+                                DrawRing(g, new Rectangle(cx - 26, 12, 52, 52), d);
+                                DrawCaption(g, cx, slot, d);
                             }
                         }
                     }
@@ -1304,27 +1304,56 @@ namespace MchoseWidget
             }
         }
 
-        private void DrawCaption(Graphics g, int cx, MouseDevice d)
+        private static string ShortName(MouseDevice d)
+        {
+            string n = d.Name ?? "";
+            n = n.Replace("MCHOSE ", "").Replace("LANGTU ", "").Replace("VGN ", "");
+            n = n.Replace(" 2.4G Dongle", "").Replace(" 2.4G dongle", "").Trim();
+            return n.Length > 0 ? n : (d.Name ?? "");
+        }
+
+        private static string FitText(Graphics g, string text, Font font, float maxWidth)
+        {
+            if (g.MeasureString(text, font).Width <= maxWidth) return text;
+            for (int n = text.Length - 1; n > 0; n--)
+            {
+                string candidate = text.Substring(0, n) + "\u2026";
+                if (g.MeasureString(candidate, font).Width <= maxWidth) return candidate;
+            }
+            return "\u2026";
+        }
+
+        private void DrawCentered(Graphics g, string text, Font font, Color color, int cx, float y, float maxWidth)
+        {
+            text = FitText(g, text, font, maxWidth);
+            SizeF sz = g.MeasureString(text, font);
+            float x = cx - sz.Width / 2f;
+            using (SolidBrush halo = new SolidBrush(Color.FromArgb(150, 255, 255, 255)))
+            {
+                g.DrawString(text, font, halo, x - 1, y);
+                g.DrawString(text, font, halo, x + 1, y);
+                g.DrawString(text, font, halo, x, y - 1);
+                g.DrawString(text, font, halo, x, y + 1);
+            }
+            using (SolidBrush brush = new SolidBrush(color))
+                g.DrawString(text, font, brush, x, y);
+        }
+
+        private void DrawCaption(Graphics g, int cx, int slot, MouseDevice d)
         {
             string pct = d.Battery >= 0 ? d.Battery + "%" : "--";
-            Color pctColor = d.Battery >= 0 ? Color.FromArgb(28, 28, 30) : Color.FromArgb(120, 120, 128);
-            using (SolidBrush b = new SolidBrush(pctColor))
-            {
-                SizeF sz = g.MeasureString(pct, _fPct);
-                
-                g.DrawString(pct, _fPct, b, cx - sz.Width / 2f, 82);
-            }
+            Color pctColor = d.Battery >= 0 ? Color.FromArgb(20, 20, 22) : Color.FromArgb(110, 110, 118);
+            DrawCentered(g, pct, _fPct, pctColor, cx, 66, slot - 8);
 
-            if (IsMouse(d) && d.Stages[0] > 0 && d.ActiveStage >= 0 && d.ActiveStage < 6)
-            {
-                string dpi = string.Format("{0:N0} DPI", d.Stages[d.ActiveStage]);
-                using (SolidBrush dim = new SolidBrush(Color.FromArgb(120, 120, 128)))
-                {
-                    SizeF ds = g.MeasureString(dpi, _fTiny);
-                    
-                    g.DrawString(dpi, _fTiny, dim, cx - ds.Width / 2f, 112);
-                }
-            }
+            DrawCentered(g, ShortName(d), _fSub, Color.FromArgb(38, 38, 44), cx, 96, slot - 10);
+
+            string extra = "";
+            if (d.Charge == 1) extra = "充电中";
+            else if (IsMouse(d) && d.Stages[0] > 0 && d.ActiveStage >= 0 && d.ActiveStage < 6)
+                extra = string.Format("{0:N0} DPI", d.Stages[d.ActiveStage]);
+
+            if (extra.Length > 0)
+                DrawCentered(g, extra, _fTiny, Color.FromArgb(80, 80, 88), cx, 113, slot - 10);
         }
 
         private static void Premultiply(Bitmap bmp)
