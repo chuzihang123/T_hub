@@ -1,0 +1,33 @@
+# build artifacts / logs
+build/*.log
+build/state.log
+build/pos.log
+build/layout.log
+build/frame.png
+build/desktop-shot*.png
+build/glass-shot*.png
+build/headset-shot.png
+build/presence-shot.png
+build/widget-shot.png
+
+# vendor dumps (installers unpacked for protocol research)
+vendor/
+
+# toolchain caches
+tools/node_modules/
+tools/cdp-profile/
+tools/7zip/
+tools/*.rar
+tools/*.exe
+tools/*.7z
+
+# python
+__pycache__/
+*.pyc
+
+# packaged artifacts (published as GitHub release assets)
+dist/
+
+# Inno Setup toolchain (local build only)
+tools/innosetup/
+tools/*.exe.tmp
