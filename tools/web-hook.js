@@ -49,6 +49,53 @@ const HOOK = `(() => {
       d.addEventListener('inputreport', (e) => log({ t: 'input', id: e.reportId, d: Array.from(new Uint8Array(e.data.buffer)) }));
     }));
   };
+  const hookIpc = () => {
+    const ir = window.electron && window.electron.ipcRenderer;
+    if (!ir || ir.__ipcHooked) return;
+    ir.__ipcHooked = true;
+    const oi = ir.invoke && ir.invoke.bind(ir);
+    const os = ir.send && ir.send.bind(ir);
+    const fmt = (a) => { try { return JSON.stringify(a, (k, v) => v instanceof Uint8Array ? Array.from(v) : v).slice(0, 400); } catch (e) { return String(a); } };
+    if (oi) ir.invoke = function (ch) { log({ t: 'ipc', ch: String(ch), args: fmt(Array.prototype.slice.call(arguments, 1)) }); return oi.apply(null, arguments); };
+    if (os) ir.send = function (ch) { log({ t: 'ipc', ch: String(ch), args: fmt(Array.prototype.slice.call(arguments, 1)) }); return os.apply(null, arguments); };
+  };
+  setInterval(hookIpc, 300);
+  hookIpc();
+
+  const wrapDev = (d) => {
+    if (!d || d.__wrapped) return;
+    d.__wrapped = true;
+    ['sendReport','sendFeatureReport','receiveReport','receiveFeatureReport'].forEach((n) => {
+      const orig = d[n];
+      if (typeof orig !== 'function') return;
+      d[n] = function () {
+        try {
+          const id = arguments[0], data = arguments[1];
+          log({ t: n, id: id, d: data ? Array.from(new Uint8Array(data.buffer || data)) : null });
+        } catch (e) {}
+        return orig.apply(d, arguments);
+      };
+    });
+  };
+  const hookBridge = () => {
+    const b = window.electronHID;
+    if (!b || b.__bridgeHooked) return;
+    b.__bridgeHooked = true;
+    const origReq = b.requestDevice;
+    if (typeof origReq === 'function') {
+      b.requestDevice = async function () {
+        const dev = await origReq.apply(b, arguments);
+        wrapDev(dev);
+        return dev;
+      };
+    }
+    if (typeof b.getDevices === 'function') {
+      b.getDevices().then((ds) => (ds || []).forEach(wrapDev)).catch(() => {});
+    }
+  };
+  setInterval(hookBridge, 400);
+  hookBridge();
+
   attach();
   setInterval(attach, 1500);
   return 'hooked';
@@ -86,6 +133,12 @@ async function main() {
   const hookRes = await send("Runtime.evaluate", { expression: HOOK, returnByValue: true });
   console.log("hook:", hookRes.result && hookRes.result.value);
 
+  if (process.env.RELOAD === "1") {
+    console.log("reloading to catch the initial device read...");
+    await send("Page.reload", { ignoreCache: false });
+    await new Promise((r) => setTimeout(r, 4000));
+  }
+
   const seen = new Set();
   const deadline = Date.now() + DURATION;
   while (Date.now() < deadline) {
@@ -100,7 +153,8 @@ async function main() {
         const key = e.t + "|" + e.id + "|" + hex(e.d);
         if (seen.has(key)) return;
         seen.add(key);
-        console.log(`${e.t.padEnd(20)} id=0x${(e.id || 0).toString(16).padStart(2, "0")}  ${hex(e.d)}`);
+        if (e.t === 'ipc') console.log(`ipc ${e.ch.padEnd(24)} ${e.args}`);
+        else console.log(`${e.t.padEnd(20)} id=0x${(e.id || 0).toString(16).padStart(2, "0")}  ${hex(e.d)}`);
       });
     } catch (e) { /* navigating */ }
   }

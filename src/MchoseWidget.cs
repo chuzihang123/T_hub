@@ -258,6 +258,84 @@ namespace MchoseWidget
             finally { Hid.CloseHandle(h); }
         }
 
+        public static MouseDevice TryOpenVgn(string path)
+        {
+            IntPtr h = Hid.CreateFile(path, Hid.GENERIC_READ | Hid.GENERIC_WRITE,
+                Hid.FILE_SHARE_READ | Hid.FILE_SHARE_WRITE, IntPtr.Zero, Hid.OPEN_EXISTING, 0, IntPtr.Zero);
+            if (h == Hid.INVALID_HANDLE) return null;
+            try
+            {
+                Hid.HIDD_ATTRIBUTES attrs = new Hid.HIDD_ATTRIBUTES();
+                attrs.Size = Marshal.SizeOf(typeof(Hid.HIDD_ATTRIBUTES));
+                if (!Hid.HidD_GetAttributes(h, ref attrs)) return null;
+                if (attrs.VendorID != 0x320F) return null;
+                IntPtr preparsed;
+                if (!Hid.HidD_GetPreparsedData(h, out preparsed)) return null;
+                Hid.HIDP_CAPS caps = new Hid.HIDP_CAPS();
+                try
+                {
+                    if (Hid.HidP_GetCaps(preparsed, ref caps) != 0x00110000) return null;
+                }
+                finally { Hid.HidD_FreePreparsedData(preparsed); }
+                if (caps.UsagePage != 0xFF1C) return null;
+
+                MouseDevice dev = new MouseDevice();
+                dev.Path = path;
+                dev.VendorId = attrs.VendorID;
+                dev.ProductId = attrs.ProductID;
+                StringBuilder sb = new StringBuilder(256);
+                if (Hid.HidD_GetProductString(h, sb, sb.Capacity * 2)) dev.Name = sb.ToString();
+                dev.Name = (dev.Name ?? "").Replace(" 2.4G Dongle", "").Replace(" 2.4G dongle", "").Trim();
+                if (dev.Name.Length == 0) dev.Name = "VGN Keyboard";
+                return dev;
+            }
+            finally { Hid.CloseHandle(h); }
+        }
+
+        public static void RefreshVgn(MouseDevice dev)
+        {
+            IntPtr h = Hid.CreateFile(dev.Path, Hid.GENERIC_READ | Hid.GENERIC_WRITE,
+                Hid.FILE_SHARE_READ | Hid.FILE_SHARE_WRITE, IntPtr.Zero, Hid.OPEN_EXISTING, 0x40000000, IntPtr.Zero);
+            if (h == Hid.INVALID_HANDLE) { dev.Awake = false; dev.Error = "无法打开"; return; }
+            try
+            {
+                byte[] readBuf = new byte[64];
+                Native.OVERLAPPED rov = new Native.OVERLAPPED();
+                IntPtr rev = Native.CreateEvent(IntPtr.Zero, true, false, null);
+                rov.hEvent = rev;
+                uint got = 0;
+                Native.ReadFile(h, readBuf, 64, out got, ref rov);
+
+                byte[] outBuf = new byte[64];
+                outBuf[0] = 0x04;
+                outBuf[3] = 0x1A;
+                Native.OVERLAPPED wov = new Native.OVERLAPPED();
+                IntPtr wev = Native.CreateEvent(IntPtr.Zero, true, false, null);
+                wov.hEvent = wev;
+                uint wrote = 0;
+                Native.WriteFile(h, outBuf, 64, out wrote, ref wov);
+                Native.WaitForSingleObject(wev, 400);
+
+                if (Native.WaitForSingleObject(rev, 700) == 0)
+                {
+                    Native.GetOverlappedResult(h, ref rov, out got, false);
+                    if (got >= 9 && readBuf[1] == 0x00 && readBuf[2] == 0x00 && readBuf[3] == 0x1A)
+                    {
+                        int level = readBuf[8];
+                        dev.Battery = level;
+                        dev.Charge = 0;
+                        dev.Awake = level > 0 && level <= 100;
+                        dev.Error = dev.Awake ? "" : "休眠";
+                        return;
+                    }
+                }
+                dev.Awake = false;
+                dev.Error = "无信号";
+            }
+            catch { dev.Awake = false; dev.Error = "读取失败"; }
+            finally { Hid.CloseHandle(h); }
+        }
+
         public static MouseDevice TryOpenKeyboard(string path)
         {
             IntPtr h = Hid.CreateFile(path, Hid.GENERIC_READ | Hid.GENERIC_WRITE,
@@ -417,64 +495,6 @@ namespace MchoseWidget
             dev.ConnectMode = mode;
             dev.Error = "";
             return true;
-        }
-
-        public static MouseDevice TryOpenVgn(string path)
-        {
-            MouseDevice dev = null;
-            IntPtr h = Hid.CreateFile(path, Hid.GENERIC_READ | Hid.GENERIC_WRITE,
-                Hid.FILE_SHARE_READ | Hid.FILE_SHARE_WRITE, IntPtr.Zero, Hid.OPEN_EXISTING, 0, IntPtr.Zero);
-            if (h == Hid.INVALID_HANDLE) return null;
-            try
-            {
-                Hid.HIDD_ATTRIBUTES attrs = new Hid.HIDD_ATTRIBUTES();
-                attrs.Size = Marshal.SizeOf(typeof(Hid.HIDD_ATTRIBUTES));
-                if (!Hid.HidD_GetAttributes(h, ref attrs)) return null;
-
-                IntPtr preparsed;
-                if (!Hid.HidD_GetPreparsedData(h, out preparsed)) return null;
-                Hid.HIDP_CAPS caps = new Hid.HIDP_CAPS();
-                try
-                {
-                    if (Hid.HidP_GetCaps(preparsed, ref caps) != 0x00110000) return null;
-                }
-                finally { Hid.HidD_FreePreparsedData(preparsed); }
-
-                if (caps.Usage != 1) return null;
-                if (caps.UsagePage != 0xFFA0 && caps.UsagePage != 0xFFB0 && caps.UsagePage != 0xFF60)
-                    return null;
-
-                dev = new MouseDevice();
-                dev.Path = path;
-                dev.VendorId = attrs.VendorID;
-                dev.ProductId = attrs.ProductID;
-                dev.IsVgn = true;
-                StringBuilder sb = new StringBuilder(256);
-                if (Hid.HidD_GetProductString(h, sb, sb.Capacity * 2) && sb.Length > 0)
-                    dev.Name = sb.ToString();
-                else
-                    dev.Name = "VGN " + string.Format("{0:X4}:{1:X4}", attrs.VendorID, attrs.ProductID);
-            }
-            finally { Hid.CloseHandle(h); }
-
-            if (dev == null) return null;
-            byte[] reply;
-            if (!VgnExchange(path, VgnInfoPacket(), 500, out reply)) return null;
-            if (!VgnParse(dev, reply)) return null;
-            dev.Awake = true;
-            return dev;
-        }
-
-        public static void RefreshVgn(MouseDevice dev)
-        {
-            byte[] reply;
-            if (!VgnExchange(dev.Path, VgnInfoPacket(), 500, out reply))
-            {
-                dev.Awake = false;
-                dev.Error = "无响应";
-                return;
-            }
-            dev.Awake = VgnParse(dev, reply);
         }
 
         public static void RefreshHeadset(MouseDevice dev)
@@ -844,6 +864,7 @@ namespace MchoseWidget
                         if (d == null) d = Protocol.TryOpenHeadset(p);
                         if (d == null) d = Protocol.TryOpenKeyboard(p);
                         if (d == null) d = Protocol.TryOpenVgn(p);
+                        if (d == null) d = Protocol.TryOpenVgn(p);
                         if (d != null) found.Add(d);
                     }
                     foreach (MouseDevice d in found)
@@ -851,6 +872,7 @@ namespace MchoseWidget
                         if (d.IsVgn) Protocol.RefreshVgn(d);
                         else if (d.ProductId == 0x385D) Protocol.RefreshHeadset(d);
                         else if (d.ProductId == 0x8FFF && d.VendorId == 0x1A2C) Protocol.RefreshKeyboard(d);
+                        else if (d.VendorId == 0x320F) Protocol.RefreshVgn(d);
                         else Protocol.Refresh(d);
                         MouseDevice prev;
                         if (LastKnown.TryGetValue(d.Key, out prev))

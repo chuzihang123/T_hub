@@ -144,6 +144,11 @@ def enumerate_hid():
                 # end-of-list often reports 0 instead of ERROR_NO_MORE_ITEMS
                 if err in (0, ERROR_NO_MORE_ITEMS):
                     return
+                # some interfaces refuse access mid-enumeration; skip them
+                idx += 1
+                if idx > 400:
+                    return
+                continue
                 raise ctypes.WinError(err)
             idx += 1
             need = wt.DWORD(0)
