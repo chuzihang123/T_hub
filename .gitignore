@@ -31,3 +31,6 @@ dist/
 # Inno Setup toolchain (local build only)
 tools/innosetup/
 tools/*.exe.tmp
+
+tools/vgn-profile/
+tools/cdp-profile/
